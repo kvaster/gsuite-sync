@@ -1,0 +1,35 @@
+gsuite:
+  domains:
+    - domain: mydomain.com
+      org_unit: /
+    - domain: onemoredomain.com
+      org_unit: /Sub Organization
+
+  # this file is obtained from google - please read documentation about delegated user and services
+  credentials_file: mydomain-gsuite-sync.json
+  delegated_user: superadmin@mydomain.com
+
+  # sync_retry_delay_seconds: 300
+
+ldap:
+  url: ldap://ldap.mydomain.com
+  login_dn: ou=people,dc=mydomain,dc=com
+  login_filter: uid
+  group_dn: ou=groups,dc=mydomain,dc=com
+  group_filter: member
+  bind_dn: cn=reader,dc=mydomain,dc=com
+  bind_pw: readerpassword
+
+  # reconnect_delay_millis: 5000
+
+mail:
+  host: mail.mydomain.com
+  login: noreply
+  password: noreplypassword
+  address: noreply@mydomain.com
+  from: GSuite Sync
+  to:
+    - GSuite Admin <superadmin@mydomain.com>
+  # threads: 1
+  # send_retries: 3
+  # retry_delay_millis: 1000
