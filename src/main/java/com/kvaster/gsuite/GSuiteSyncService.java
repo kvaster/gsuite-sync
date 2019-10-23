@@ -708,6 +708,17 @@ public class GSuiteSyncService {
         scheduler.schedule(this::setupLdapListener, ldapConfig.getReconnectDelayMillis(), TimeUnit.MILLISECONDS);
     }
 
+    private void updateCookie(ContentSyncStateControl control) {
+        if (control != null) {
+            ASN1OctetString c = control.getCookie();
+
+            if (c != null) {
+                cookie = c;
+                LOG.debug("new cookie: {}", c.stringValue());
+            }
+        }
+    }
+
     private void setupLdapListener() {
         LOG.info("Connecting to ldap");
 
@@ -721,6 +732,9 @@ public class GSuiteSyncService {
                 @Override
                 public void searchResultReceived(AsyncRequestID requestID, SearchResult searchResult) {
                     LOG.info("Search result received -> connection closed");
+
+                    updateCookie((ContentSyncStateControl) searchResult.getResponseControl(ContentSyncStateControl.SYNC_STATE_OID));
+
                     closeSearch();
                     scheduleSetupLdapListener();
                 }
@@ -729,10 +743,7 @@ public class GSuiteSyncService {
                 public void searchEntryReturned(SearchResultEntry searchEntry) {
                     // LOG.info("Ldap entry change occurred");
 
-                    ContentSyncStateControl control = (ContentSyncStateControl) searchEntry.getControl(ContentSyncStateControl.SYNC_STATE_OID);
-                    if (control != null) {
-                        cookie = control.getCookie();
-                    }
+                    updateCookie((ContentSyncStateControl) searchEntry.getControl(ContentSyncStateControl.SYNC_STATE_OID));
 
                     scheduleSync(0);
                 }
