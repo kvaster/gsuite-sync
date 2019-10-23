@@ -42,6 +42,7 @@ import com.unboundid.ldap.sdk.SearchResult;
 import com.unboundid.ldap.sdk.SearchResultEntry;
 import com.unboundid.ldap.sdk.SearchResultReference;
 import com.unboundid.ldap.sdk.SearchScope;
+import com.unboundid.ldap.sdk.controls.ContentSyncDoneControl;
 import com.unboundid.ldap.sdk.controls.ContentSyncRequestControl;
 import com.unboundid.ldap.sdk.controls.ContentSyncRequestMode;
 import com.unboundid.ldap.sdk.controls.ContentSyncStateControl;
@@ -708,14 +709,10 @@ public class GSuiteSyncService {
         scheduler.schedule(this::setupLdapListener, ldapConfig.getReconnectDelayMillis(), TimeUnit.MILLISECONDS);
     }
 
-    private void updateCookie(ContentSyncStateControl control) {
-        if (control != null) {
-            ASN1OctetString c = control.getCookie();
-
-            if (c != null) {
-                cookie = c;
-                LOG.debug("new cookie: {}", c.stringValue());
-            }
+    private void updateCookie(ASN1OctetString cookie) {
+        if (cookie != null) {
+            this.cookie = cookie;
+            LOG.debug("new cookie: {}", cookie.stringValue());
         }
     }
 
@@ -733,7 +730,10 @@ public class GSuiteSyncService {
                 public void searchResultReceived(AsyncRequestID requestID, SearchResult searchResult) {
                     LOG.info("Search result received -> connection closed");
 
-                    updateCookie((ContentSyncStateControl) searchResult.getResponseControl(ContentSyncStateControl.SYNC_STATE_OID));
+                    ContentSyncDoneControl c = (ContentSyncDoneControl) searchResult.getResponseControl(ContentSyncDoneControl.SYNC_DONE_OID);
+                    if (c != null) {
+                        updateCookie(c.getCookie());
+                    }
 
                     closeSearch();
                     scheduleSetupLdapListener();
@@ -743,7 +743,10 @@ public class GSuiteSyncService {
                 public void searchEntryReturned(SearchResultEntry searchEntry) {
                     // LOG.info("Ldap entry change occurred");
 
-                    updateCookie((ContentSyncStateControl) searchEntry.getControl(ContentSyncStateControl.SYNC_STATE_OID));
+                    ContentSyncStateControl c = (ContentSyncStateControl) searchEntry.getControl(ContentSyncStateControl.SYNC_STATE_OID);
+                    if (c != null) {
+                        updateCookie(c.getCookie());
+                    }
 
                     scheduleSync(0);
                 }
@@ -762,7 +765,7 @@ public class GSuiteSyncService {
                     SearchRequest.ALL_OPERATIONAL_ATTRIBUTES);
 
             req.addControl(new ContentSyncRequestControl(
-                    ContentSyncRequestMode.REFRESH_AND_PERSIST,
+                    cookie == null ? ContentSyncRequestMode.REFRESH_ONLY : ContentSyncRequestMode.REFRESH_AND_PERSIST,
                     cookie,
                     false
             ));
