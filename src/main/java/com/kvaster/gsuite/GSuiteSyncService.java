@@ -594,39 +594,42 @@ public class GSuiteSyncService {
 
         String login = null;
         String orgUnit = null;
-        int priority = Integer.MAX_VALUE;
         Set<String> mails = new HashSet<>();
 
         Attribute attr = e.getAttribute("mail");
         if (attr != null) {
             for (String mail : attr.getValues()) {
-                boolean accepted = false;
-
-                int p = 0;
-
                 for (Domain d : domains) {
-                    String targetMail = uid;
-                    if (!targetMail.contains("@")) {
-                        targetMail = targetMail + '@' + d.getDomain();
-                    }
+                    if (isInDomain(mail, d)) {
+                        mails.add(mail);
 
-                    if (isInDomain(mail, d) && isInDomain(targetMail, d)) {
-                        accepted = true;
+                        String targetMail = uid;
+                        if (!targetMail.contains("@")) {
+                            targetMail = targetMail + '@' + d.getDomain();
+                        }
 
-                        if (mail.equals(targetMail)) {
-                            if (priority > p) {
-                                priority = p;
+                        if (isInDomain(mail, d) && isInDomain(targetMail, d)) {
+                            if (login == null && mail.equals(targetMail)) {
                                 login = mail;
                                 orgUnit = d.getOrgUnit();
                             }
                         }
-                    }
 
-                    if (accepted) {
+                        // mail should be only in one domain
+                        break;
+                    }
+                }
+            }
+        }
+
+        attr = e.getAttribute("mailAlternateAddress");
+        if (attr != null) {
+            for (String mail : attr.getValues()) {
+                for (Domain d : domains) {
+                    if (isInDomain(mail, d)) {
                         mails.add(mail);
+                        break;
                     }
-
-                    p++;
                 }
             }
         }
