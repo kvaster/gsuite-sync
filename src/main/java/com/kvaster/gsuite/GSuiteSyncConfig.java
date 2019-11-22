@@ -31,6 +31,7 @@ class GSuiteSyncConfig {
         private List<Domain> domains;
         private File credentialsFile;
         private String delegatedUser;
+        private boolean reportUncontrolled = true;
 
         private int syncRetryDelaySeconds = 600;
 
@@ -42,11 +43,13 @@ class GSuiteSyncConfig {
                 List<Domain> domains,
                 File credentialsFile,
                 String delegatedUser,
+                boolean reportUncontrolled,
                 int syncRetryDelaySeconds
         ) {
             this.domains = domains;
             this.credentialsFile = credentialsFile;
             this.delegatedUser = delegatedUser;
+            this.reportUncontrolled = reportUncontrolled;
             this.syncRetryDelaySeconds = syncRetryDelaySeconds;
         }
 
@@ -60,6 +63,10 @@ class GSuiteSyncConfig {
 
         public String getDelegatedUser() {
             return delegatedUser;
+        }
+
+        public boolean getReportUncontrolled() {
+            return reportUncontrolled;
         }
 
         public int getSyncRetryDelaySeconds() {

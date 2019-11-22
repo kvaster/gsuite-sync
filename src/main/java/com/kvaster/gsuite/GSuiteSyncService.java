@@ -1,6 +1,8 @@
 package com.kvaster.gsuite;
 
 import java.io.IOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -16,6 +18,7 @@ import java.util.stream.Collectors;
 
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.client.util.Base64;
+import com.google.api.client.util.Strings;
 import com.google.api.services.admin.directory.Directory;
 import com.google.api.services.admin.directory.model.Alias;
 import com.google.api.services.admin.directory.model.Aliases;
@@ -71,6 +74,9 @@ public class GSuiteSyncService {
 
     private final ScheduledThreadPoolExecutor scheduler;
 
+    private final PasswordGenerator passwordGenerator = new PasswordGenerator();
+
+    private final boolean reportUncontrolled;
     private final long retrySyncInMillis;
 
     // TODO We're using only one thread for tasks, but we should check if it's really thread safe
@@ -95,6 +101,7 @@ public class GSuiteSyncService {
 
         directory = GoogleHelper.createDirectoryService(gc.getCredentialsFile(), gc.getDelegatedUser());
 
+        reportUncontrolled = gc.getReportUncontrolled();
         retrySyncInMillis = TimeUnit.SECONDS.toMillis(gc.getSyncRetryDelaySeconds());
 
         ldapConfig = config.getLdapConfig();
@@ -234,28 +241,37 @@ public class GSuiteSyncService {
         Set<String> forDel = new TreeSet<>();
         Set<String> forAdd = new TreeSet<>();
         Set<String> forUpd = new TreeSet<>();
+        Set<String> forCtrl = new TreeSet<>();
 
         ldapUsers.values().forEach((u) -> {
-            if (u.needSync && u.password != null) {
+            if (u.needSync) {
                 String login = u.login;
                 User gu = gsuiteUsers.get(login);
                 if (gu == null) {
-                    forAdd.add(login);
+                    if (!u.failed) {
+                        forAdd.add(login);
+                    }
                 } else if (needSync(u, gu)) {
                     forUpd.add(login);
+
+                    if (u.failed) {
+                        forDel.add(login);
+                    }
                 }
             }
         });
 
-        gsuiteUsers.values().forEach((u) -> {
-            String login = u.getPrimaryEmail();
-            LdapUser lu = ldapUsers.get(login);
-            if (lu == null) {
-                forDel.add(login);
-            }
-        });
+        if (reportUncontrolled) {
+            gsuiteUsers.values().forEach((u) -> {
+                String login = u.getPrimaryEmail();
+                LdapUser lu = ldapUsers.get(login);
+                if (lu == null) {
+                    forCtrl.add(login);
+                }
+            });
+        }
 
-        LOG.info("for del: {}, add: {}, update: {}", forDel.size(), forAdd.size(), forUpd.size());
+        LOG.info("for del: {}, add: {}, update: {}, ctrl: {}", forDel.size(), forAdd.size(), forUpd.size(), forCtrl.size());
 
         List<LdapUser> forAliasUpdate = new ArrayList<>();
 
@@ -264,14 +280,20 @@ public class GSuiteSyncService {
             msgs.warn("user should be deleted manually: %s", login);
         });
 
+        forCtrl.forEach((login) -> {
+            LOG.info("User is not under control: {}", login);
+            msgs.warn("user is not under control: %s", login);
+        });
+
         forAdd.forEach((login) -> {
             LdapUser lu = ldapUsers.get(login);
 
             LOG.info("Adding user: {}", login);
 
             User user = createUser(lu, msgs);
-            if (user == null) {
-                msgs.warn("can't add user: %s", login);
+            if (user.getPassword() == null) {
+                LOG.info("Can't add user without password: {}", login);
+                msgs.warn("can't add user without password: %s", login);
                 return;
             }
 
@@ -294,10 +316,6 @@ public class GSuiteSyncService {
             LOG.info("Updating user: {}", login);
 
             User user = createUser(lu, msgs);
-            if (user == null) {
-                msgs.warn("can't update user: %s", login);
-                return;
-            }
 
             try {
                 directory.users().update(login, user).execute();
@@ -427,7 +445,23 @@ public class GSuiteSyncService {
             }
         }
 
+        if (lu.failed) {
+            if (!Strings.isNullOrEmpty((String) gu.get("recoveryEmail"))
+                    || !Strings.isNullOrEmpty((String) gu.get("recoveryPhone"))) {
+                return true;
+            }
+        }
+
         return false;
+    }
+
+    private static byte[] sha1(String str) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA1");
+            return md.digest(str.getBytes());
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private User createUser(LdapUser lu, Msgs msgs) {
@@ -437,14 +471,25 @@ public class GSuiteSyncService {
         user.setOrgUnitPath(lu.orgUnit);
         user.setIncludeInGlobalAddressList(lu.searchable);
 
-        if (lu.password != null && lu.password.startsWith(SHA_PREFIX)) {
-            user.setHashFunction("SHA-1");
-            user.setPassword(BaseEncoding.base16()
-                    .encode(Base64.decodeBase64(lu.password.substring(SHA_PREFIX.length()))));
-        } else {
-            LOG.warn("User has no SHA password: {}", lu.login);
-            msgs.warn("user has no SHA password: %s", lu.login);
-            return null;
+        String pass = lu.password;
+
+        if (lu.failed) {
+            // generate random (unknown) password for failed employees
+            pass = "{SHA}" + Base64.encodeBase64String(sha1(passwordGenerator.genPass()));
+            // and reset recovery email and phone
+            user.set("recoveryEmail", "");
+            user.set("recoveryPhone", "");
+        }
+
+        if (pass != null) {
+            if (pass.startsWith(SHA_PREFIX)) {
+                user.setHashFunction("SHA-1");
+                user.setPassword(BaseEncoding.base16()
+                        .encode(Base64.decodeBase64(pass.substring(SHA_PREFIX.length()))));
+            } else {
+                LOG.warn("User password is not SHA: {}", lu.login);
+                msgs.warn("user password is not SHA: %s", lu.login);
+            }
         }
 
         user.setAliases(new ArrayList<>(lu.aliases));
@@ -512,16 +557,17 @@ public class GSuiteSyncService {
     /////// LDAP ///////
 
     private static class LdapUser {
-        String givenName;
-        String surName;
-        String login;
-        Set<String> aliases;
-        String password;
-        String phone;
-        String orgUnit;
-        boolean searchable;
-        String lastModify;
-        boolean needSync;
+        final String givenName;
+        final String surName;
+        final String login;
+        final Set<String> aliases;
+        final String password;
+        final String phone;
+        final String orgUnit;
+        final boolean searchable;
+        final boolean failed;
+        final String lastModify;
+        final boolean needSync;
 
         /**
          * Use data from LDAP
@@ -534,13 +580,14 @@ public class GSuiteSyncService {
          * @param phone      - phone number
          * @param orgUnit    - organization unit in gsuite
          * @param searchable - should we be able to search for contact ?
+         * @param failed     - is this failed employee ?
          * @param lastModify - last modify time from ldap
          * @param needSync   - should we sync this user with gsuite
          */
         LdapUser(
                 String givenName, String surName, String login, Set<String> aliases,
                 String password, String phone, String orgUnit, boolean searchable,
-                String lastModify, boolean needSync
+                boolean failed, String lastModify, boolean needSync
         ) {
             this.givenName = givenName;
             this.surName = surName;
@@ -550,6 +597,8 @@ public class GSuiteSyncService {
             this.phone = phone;
             this.orgUnit = orgUnit;
             this.searchable = searchable;
+            this.failed = failed;
+
             this.lastModify = lastModify;
             this.needSync = needSync;
         }
@@ -570,6 +619,8 @@ public class GSuiteSyncService {
     private LdapUser getLdapUser(SearchResultEntry e, Msgs msgs) {
         String employeeType = orDefault(e.getAttributeValue("employeeType"), "");
 
+        boolean failed = false;
+
         switch (employeeType) {
             case "":
             case "hidden":
@@ -577,8 +628,9 @@ public class GSuiteSyncService {
                 break;
 
             case "failed":
-                // this user is failed - skipping
-                return null;
+                // this user is failed - processing carefully :)
+                failed = true;
+                break;
 
             case "service":
                 // this user is service and it is used for sending through our own smtp - skipping
@@ -635,7 +687,7 @@ public class GSuiteSyncService {
         }
 
         if (login == null) {
-            if (mails.size() > 0) {
+            if (!failed && mails.size() > 0) {
                 LOG.warn("User should be controlled by domains, but it is not: {}", e.getDN());
                 msgs.warn("user should be controlled, but it is not: %s", e.getDN());
             }
@@ -655,8 +707,8 @@ public class GSuiteSyncService {
 
         return new LdapUser(
                 name, surname, login, mails, password,
-                phone, orgUnit, searchable, lastModify,
-                true
+                phone, orgUnit, searchable, failed,
+                lastModify, true
         );
     }
 
