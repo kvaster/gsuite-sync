@@ -1,3 +1,7 @@
 bazel-*
 .ijwb
 tmp
+.gradle
+.idea
+build
+
