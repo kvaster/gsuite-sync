@@ -12,7 +12,6 @@ val javaMailVersion = "1.6.4"
 val logbackVersion = "1.2.3"
 val slf4jVersion = "1.7.26"
 val snakeYamlVersion = "1.25"
-val undertowVersion = "2.0.27.Final"
 val unboundidLdapSdkVersion = "4.0.11"
 
 plugins {
