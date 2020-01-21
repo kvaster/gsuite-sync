@@ -1,5 +1,3 @@
-bazel-*
-.ijwb
 tmp
 .gradle
 .idea
