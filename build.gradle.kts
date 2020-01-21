@@ -7,6 +7,7 @@ val googleOAuthHttpVersion = "0.17.0"
 val commonsEmailVersion = "1.5"
 val jacksonVersion = "2.9.9"
 val jacksonDatabindVersion = "2.9.9.3"
+val janinoVersion = "3.1.0"
 val javaMailVersion = "1.6.4"
 val logbackVersion = "1.2.3"
 val slf4jVersion = "1.7.26"
@@ -36,6 +37,7 @@ dependencies {
     implementation("org.slf4j:jcl-over-slf4j:$slf4jVersion")
     implementation("org.slf4j:jul-to-slf4j:$slf4jVersion")
     implementation("ch.qos.logback:logback-classic:$logbackVersion")
+    implementation("org.codehaus.janino:janino:$janinoVersion")
 
     // app specific
     implementation("com.unboundid:unboundid-ldapsdk:$unboundidLdapSdkVersion")
